@@ -1,0 +1,55 @@
+name: QA in a browser
+
+# Opens 25 random products of each listed site's newest saved run in Chrome, from GitHub's US
+# servers, and logs their price and stock against what was saved in qa_checks, where the dashboard
+# shows "QA passed / failed". For the sites the dashboard's own daily QA (Vercel, Frankfurt) can't
+# judge: US-only prices or stock, bot walls, prices drawn with JavaScript (browserqa/qa.py).
+# Daily an hour after the dashboard's QA (10:30 PKT), on one account; by hand on any.
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      sites:
+        description: "Sites to check, comma-separated (blank = the list in browserqa/qa.py)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Only print the results (don't log them for the dashboard)"
+        type: boolean
+        default: false
+      sample:
+        description: "Products per site (blank = 25; fewer only for trying it out)"
+        required: false
+        default: ""
+
+jobs:
+  qa:
+    # The code is published to several accounts; the daily run happens on one of them.
+    if: github.event_name == 'workflow_dispatch' || github.repository_owner == 'Adam-lab-maker'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        # Playwright drives the Chrome that GitHub's runners come with (no browser download)
+        run: pip install -r requirements.txt playwright
+
+      - name: QA
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          QA_DB_PASSWORD: ${{ secrets.QA_DB_PASSWORD }}
+          QA_SITES: ${{ inputs.sites }}
+          QA_DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+          QA_SAMPLE: ${{ inputs.sample }}
+          # A visible Chrome on a virtual screen: some bot walls turn a headless one away
+          QA_HEADFUL: "1"
+        run: |
+          command -v xvfb-run >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq xvfb)
+          xvfb-run -a python -u -m browserqa.qa
